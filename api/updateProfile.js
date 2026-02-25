@@ -16,7 +16,25 @@ module.exports = async (req, res) => {
 
   try {
 
-    console.log("BODY:", req.body);
+    const { user_id, new_name, new_description } = req.body;
+
+    if (!user_id) {
+      return res.status(400).json({ error: 'user_id missing' });
+    }
+
+    const updateData = {};
+
+    if (new_name && new_name.trim() !== '') {
+      updateData.name = new_name;
+    }
+
+    if (new_description && new_description.trim() !== '') {
+      updateData.description = new_description;
+    }
+
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({ error: 'Nothing to update' });
+    }
 
     const supabase = createClient(
       process.env.SUPABASE_URL,
@@ -25,19 +43,17 @@ module.exports = async (req, res) => {
 
     const { data, error } = await supabase
       .from('users')
-      .update({ name: "ТЕСТ" })
-      .eq('id', 'mroreo')
-      .select();
+      .update(updateData)
+      .eq('id', user_id)
+      .select();   // ❗ без .single()
 
     if (error) {
-      console.log("SUPABASE ERROR:", error);
       return res.status(500).json({ error: error.message });
     }
 
     return res.status(200).json({ success: true, data });
 
   } catch (err) {
-    console.log("SERVER ERROR:", err);
     return res.status(500).json({ error: err.message });
   }
 };
