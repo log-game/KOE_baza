@@ -1,0 +1,6 @@
+if(action==="getAllClans"){
+ const { data } = await supabase
+  .from("clans")
+  .select("id,name")
+ return res.json(data)
+}
