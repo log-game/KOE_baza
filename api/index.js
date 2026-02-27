@@ -18,232 +18,267 @@ export default async function handler(req, res) {
 
   try {
 
-    // ================= USERS =================
+  // ================= USERS =================
 
-    if (action === "getUser") {
-      const { user_id } = payload;
-      const { data } = await supabase
+  if (action === "getUser") {
+    const { user_id } = payload;
+    const { data } = await supabase
+      .from("users")
+      .select("*")
+      .eq("id", user_id)
+      .single();
+    return res.json(data);
+  }
+
+  if (action === "updateProfile") {
+    const { user_id, name, description } = payload;
+    await supabase.from("users")
+      .update({ name, description })
+      .eq("id", user_id);
+    return res.json({ success:true });
+  }
+
+  if (action === "leaveClan") {
+    const { user_id } = payload;
+
+    const { data:user } = await supabase
+      .from("users")
+      .select("*")
+      .eq("id", user_id)
+      .single();
+
+    if (user.clan_role === "Глава") {
+
+      const { data:co } = await supabase
         .from("users")
         .select("*")
-        .eq("id", user_id)
-        .single();
-      return res.json(data);
-    }
+        .eq("clan_id", user.clan_id)
+        .eq("clan_role","Со-глава")
+        .limit(1);
 
-    if (action === "updateProfile") {
-      const { user_id, name, description } = payload;
-      await supabase.from("users")
-        .update({ name, description })
-        .eq("id", user_id);
-      return res.json({ success: true });
-    }
-
-    if (action === "leaveClan") {
-      const { user_id } = payload;
-
-      const { data: user } = await supabase
-        .from("users")
-        .select("*")
-        .eq("id", user_id)
-        .single();
-
-      if (user.clan_role === "Глава") {
-
-        const { data: coLeaders } = await supabase
-          .from("users")
-          .select("*")
-          .eq("clan_id", user.clan_id)
-          .eq("clan_role", "Со-глава")
-          .limit(1);
-
-        if (coLeaders.length > 0) {
-          await supabase.from("users")
-            .update({ clan_role: "Глава" })
-            .eq("id", coLeaders[0].id);
-        }
+      if (co.length > 0) {
+        await supabase.from("users")
+          .update({ clan_role:"Глава" })
+          .eq("id", co[0].id);
       }
-
-      await supabase.from("users")
-        .update({ clan_id: null, clan_role: null })
-        .eq("id", user_id);
-
-      return res.json({ success: true });
     }
 
-    // ================= CLANS =================
+    await supabase.from("users")
+      .update({ clan_id:null, clan_role:null })
+      .eq("id", user_id);
 
-    if (action === "getClan") {
-      const { clan_id } = payload;
-      const { data } = await supabase
-        .from("clans")
-        .select("*")
-        .eq("id", clan_id)
-        .maybeSingle();
-      return res.json(data);
-    }
+    return res.json({ success:true });
+  }
 
-    if (action === "getAllClans") {
-      const { data } = await supabase
-        .from("clans")
-        .select("id,name");
-      return res.json(data);
-    }
+  // ================= CLANS =================
 
-    if (action === "updateClanInfo") {
-      const { clan_id, name, description } = payload;
-      await supabase.from("clans")
-        .update({ name, description })
-        .eq("id", clan_id);
-      return res.json({ success: true });
-    }
+  if (action === "getClan") {
+    const { clan_id } = payload;
+    const { data } = await supabase
+      .from("clans")
+      .select("*")
+      .eq("id", clan_id)
+      .maybeSingle();
+    return res.json(data);
+  }
 
-    if (action === "updateGoal") {
-      const { clan_id, goal } = payload;
-      await supabase.from("clans")
-        .update({ goal })
-        .eq("id", clan_id);
-      return res.json({ success: true });
-    }
+  if (action === "getAllClans") {
+    const { data } = await supabase
+      .from("clans")
+      .select("*");
+    return res.json(data);
+  }
 
-    if (action === "deleteClan") {
-      const { clan_id } = payload;
+  if (action === "createClan") {
+    const { name, description, owner_id } = payload;
 
-      await supabase.from("users")
-        .update({ clan_id: null, clan_role: null })
-        .eq("clan_id", clan_id);
+    const { data:newClan } = await supabase
+      .from("clans")
+      .insert([{ name, description }])
+      .select()
+      .single();
 
-      await supabase.from("clan_requests")
-        .delete().eq("clan_id", clan_id);
+    await supabase.from("users")
+      .update({ clan_id:newClan.id, clan_role:"Глава" })
+      .eq("id", owner_id);
 
-      await supabase.from("clans")
-        .delete().eq("id", clan_id);
+    return res.json(newClan);
+  }
 
-      return res.json({ success: true });
-    }
+  if (action === "updateClanInfo") {
+    const { clan_id, name, description } = payload;
 
-    // ================= MEMBERS =================
+    await supabase.from("clans")
+      .update({ name, description })
+      .eq("id", clan_id);
 
-    if (action === "getMembers") {
-      const { clan_id } = payload;
-      const { data } = await supabase
-        .from("users")
-        .select("id,name,clan_role,cups,concepts")
-        .eq("clan_id", clan_id);
-      return res.json(data);
-    }
+    return res.json({ success:true });
+  }
 
-    if (action === "changeRole") {
-      const { current_user_id, target_user_id, new_role } = payload;
+  if (action === "updateGoal") {
+    const { clan_id, goal } = payload;
 
-      if (current_user_id === target_user_id)
-        return res.json({ error: "Нельзя изменить свою роль" });
+    await supabase.from("clans")
+      .update({ goal })
+      .eq("id", clan_id);
 
-      const { data: targetUser } = await supabase
-        .from("users")
-        .select("*")
-        .eq("id", target_user_id)
-        .single();
+    return res.json({ success:true });
+  }
 
-      if (targetUser.clan_role === "Глава")
-        return res.json({ error: "Нельзя изменить роль главы" });
+  if (action === "deleteClan") {
+    const { clan_id } = payload;
 
-      await supabase.from("users")
-        .update({ clan_role: new_role })
-        .eq("id", target_user_id);
+    await supabase.from("users")
+      .update({ clan_id:null, clan_role:null })
+      .eq("clan_id", clan_id);
 
-      return res.json({ success: true });
-    }
+    await supabase.from("clan_requests")
+      .delete()
+      .eq("clan_id", clan_id);
 
-    if (action === "kickMember") {
-      const { target_user_id } = payload;
+    await supabase.from("clans")
+      .delete()
+      .eq("id", clan_id);
 
-      const { data: targetUser } = await supabase
-        .from("users")
-        .select("*")
-        .eq("id", target_user_id)
-        .single();
+    return res.json({ success:true });
+  }
 
-      if (targetUser.clan_role === "Глава")
-        return res.json({ error: "Нельзя выгнать главу" });
+  // ================= MEMBERS =================
 
-      await supabase.from("users")
-        .update({ clan_id: null, clan_role: null })
-        .eq("id", target_user_id);
+  if (action === "getMembers") {
+    const { clan_id } = payload;
 
-      return res.json({ success: true });
-    }
+    const { data } = await supabase
+      .from("users")
+      .select("id,name,clan_role,cups,concepts")
+      .eq("clan_id", clan_id);
 
-    if (action === "transferClan") {
-      const { clan_id, new_owner_id } = payload;
+    return res.json(data);
+  }
 
-      const { data: oldOwner } = await supabase
-        .from("users")
-        .select("*")
-        .eq("clan_id", clan_id)
-        .eq("clan_role", "Глава")
-        .single();
+  if (action === "changeRole") {
 
-      await supabase.from("users")
-        .update({ clan_role: "Со-глава" })
-        .eq("id", oldOwner.id);
+    const { current_user_id, target_user_id, new_role } = payload;
 
-      await supabase.from("users")
-        .update({ clan_role: "Глава" })
-        .eq("id", new_owner_id);
+    if (current_user_id === target_user_id)
+      return res.json({ error:"Нельзя изменить свою роль" });
 
-      return res.json({ success: true });
-    }
+    const { data:target } = await supabase
+      .from("users")
+      .select("*")
+      .eq("id", target_user_id)
+      .single();
 
-    // ================= REQUESTS =================
+    if (!target) return res.json({ error:"Пользователь не найден" });
 
-    if (action === "getRequests") {
-      const { clan_id } = payload;
-      const { data } = await supabase
-        .from("clan_requests")
-        .select("*")
-        .eq("clan_id", clan_id);
-      return res.json(data);
-    }
+    if (target.clan_role === "Глава")
+      return res.json({ error:"Нельзя изменить роль главы" });
 
-    if (action === "applyClan") {
-      const { user_id, clan_id } = payload;
+    await supabase.from("users")
+      .update({ clan_role:new_role })
+      .eq("id", target_user_id);
 
-      const { data: user } = await supabase
-        .from("users")
-        .select("*")
-        .eq("id", user_id)
-        .single();
+    return res.json({ success:true });
+  }
 
-      if (user.clan_id)
-        return res.json({ error: "Вы уже состоите в клане" });
+  if (action === "kickMember") {
 
-      await supabase.from("clan_requests")
-        .insert([{ user_id, clan_id }]);
+    const { target_user_id } = payload;
 
-      return res.json({ success: true });
-    }
+    const { data:target } = await supabase
+      .from("users")
+      .select("*")
+      .eq("id", target_user_id)
+      .single();
 
-    if (action === "acceptRequest") {
-      const { user_id, clan_id } = payload;
+    if (target.clan_role === "Глава")
+      return res.json({ error:"Нельзя выгнать главу" });
 
-      await supabase.from("users")
-        .update({ clan_id, clan_role: "Участник" })
-        .eq("id", user_id);
+    await supabase.from("users")
+      .update({ clan_id:null, clan_role:null })
+      .eq("id", target_user_id);
 
-      await supabase.from("clan_requests")
-        .delete().eq("user_id", user_id);
+    return res.json({ success:true });
+  }
 
-      return res.json({ success: true });
-    }
+  if (action === "transferClan") {
 
-    if (action === "rejectRequest") {
-      const { user_id } = payload;
-      await supabase.from("clan_requests")
-        .delete().eq("user_id", user_id);
-      return res.json({ success: true });
-    }
+    const { clan_id, new_owner_id } = payload;
 
-    return res.status(400).json({ error: "Unknown action" });
+    const { data:oldOwner } = await supabase
+      .from("users")
+      .select("*")
+      .eq("clan_id", clan_id)
+      .eq("clan_role","Глава")
+      .single();
+
+    await supabase.from("users")
+      .update({ clan_role:"Со-глава" })
+      .eq("id", oldOwner.id);
+
+    await supabase.from("users")
+      .update({ clan_role:"Глава" })
+      .eq("id", new_owner_id);
+
+    return res.json({ success:true });
+  }
+
+  // ================= REQUESTS =================
+
+  if (action === "getRequests") {
+    const { clan_id } = payload;
+    const { data } = await supabase
+      .from("clan_requests")
+      .select("*")
+      .eq("clan_id", clan_id);
+    return res.json(data);
+  }
+
+  if (action === "applyClan") {
+
+    const { user_id, clan_id } = payload;
+
+    const { data:user } = await supabase
+      .from("users")
+      .select("*")
+      .eq("id", user_id)
+      .single();
+
+    if (user.clan_id)
+      return res.json({ error:"Вы уже состоите в клане" });
+
+    await supabase.from("clan_requests")
+      .insert([{ user_id, clan_id }]);
+
+    return res.json({ success:true });
+  }
+
+  if (action === "acceptRequest") {
+
+    const { user_id, clan_id } = payload;
+
+    await supabase.from("users")
+      .update({ clan_id, clan_role:"Участник" })
+      .eq("id", user_id);
+
+    await supabase.from("clan_requests")
+      .delete()
+      .eq("user_id", user_id);
+
+    return res.json({ success:true });
+  }
+
+  if (action === "rejectRequest") {
+    const { user_id } = payload;
+
+    await supabase.from("clan_requests")
+      .delete()
+      .eq("user_id", user_id);
+
+    return res.json({ success:true });
+  }
+
+  return res.status(400).json({ error:"Unknown action" });
 
   } catch (err) {
     return res.status(500).json({ error: err.message });
