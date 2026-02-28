@@ -49,7 +49,6 @@ export default async function handler(req, res) {
       .single();
 
     if (user.clan_role === "Глава") {
-
       const { data:co } = await supabase
         .from("users")
         .select("*")
@@ -134,27 +133,69 @@ export default async function handler(req, res) {
   if (action === "deleteClan") {
     const { clan_id } = payload;
 
-    await supabase
-      .from("users")
+    await supabase.from("users")
       .update({ clan_id:null, clan_role:null })
       .eq("clan_id", clan_id);
 
-    await supabase
-      .from("clan_requests")
+    await supabase.from("clan_requests")
       .delete()
       .eq("clan_id", clan_id);
 
-    await supabase
-      .from("clan_news")
+    await supabase.from("clan_news")
       .delete()
       .eq("clan_id", clan_id);
 
-    await supabase
-      .from("clans")
+    await supabase.from("clan_wars")
+      .delete()
+      .or(`attacker_id.eq.${clan_id},defender_id.eq.${clan_id}`);
+
+    await supabase.from("clans")
       .delete()
       .eq("id", clan_id);
 
     return res.json({ success:true });
+  }
+
+  // ================= CLAN WARS =================
+
+  if (action === "declareWar") {
+
+    const { attacker_id, defender_id } = payload;
+
+    if (attacker_id === defender_id)
+      return res.json({ error:"Нельзя объявить войну самому себе" });
+
+    const { data:existing } = await supabase
+      .from("clan_wars")
+      .select("*")
+      .or(`and(attacker_id.eq.${attacker_id},defender_id.eq.${defender_id}),
+           and(attacker_id.eq.${defender_id},defender_id.eq.${attacker_id})`);
+
+    if (existing.length > 0)
+      return res.json({ error:"Война уже объявлена" });
+
+    await supabase.from("clan_wars")
+      .insert([{ attacker_id, defender_id }]);
+
+    await supabase.from("clan_news")
+      .insert([
+        { clan_id: attacker_id, text: "⚔️ Мы объявили войну другому клану!" },
+        { clan_id: defender_id, text: "⚔️ Нам объявили войну!" }
+      ]);
+
+    return res.json({ success:true });
+  }
+
+  if (action === "getClanWars") {
+
+    const { clan_id } = payload;
+
+    const { data } = await supabase
+      .from("clan_wars")
+      .select("*")
+      .or(`attacker_id.eq.${clan_id},defender_id.eq.${clan_id}`);
+
+    return res.json(data || []);
   }
 
   // ================= MEMBERS =================
@@ -171,7 +212,6 @@ export default async function handler(req, res) {
   }
 
   if (action === "changeRole") {
-
     const { current_user_id, target_user_id, new_role } = payload;
 
     if (current_user_id === target_user_id)
@@ -217,30 +257,6 @@ export default async function handler(req, res) {
     return res.json({ success:true });
   }
 
-  if (action === "transferClan") {
-
-    const { clan_id, new_owner_id } = payload;
-
-    const { data:oldOwner } = await supabase
-      .from("users")
-      .select("*")
-      .eq("clan_id", clan_id)
-      .eq("clan_role","Глава")
-      .single();
-
-    await supabase
-      .from("users")
-      .update({ clan_role:"Со-глава" })
-      .eq("id", oldOwner.id);
-
-    await supabase
-      .from("users")
-      .update({ clan_role:"Глава" })
-      .eq("id", new_owner_id);
-
-    return res.json({ success:true });
-  }
-
   // ================= REQUESTS =================
 
   if (action === "getRequests") {
@@ -255,7 +271,6 @@ export default async function handler(req, res) {
   }
 
   if (action === "applyClan") {
-
     const { user_id, clan_id } = payload;
 
     const { data:user } = await supabase
@@ -275,7 +290,6 @@ export default async function handler(req, res) {
   }
 
   if (action === "acceptRequest") {
-
     const { user_id, clan_id } = payload;
 
     await supabase
