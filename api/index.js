@@ -8,27 +8,28 @@ const supabase = createClient(
 export default async function handler(req, res) {
 
   if (req.method !== "POST") {
-    return res.status(405).json({ error: "Only POST" });
+    return res.status(405).json({ error: "POST only" });
   }
 
-  const { action, payload } = req.body || {};
+  const body = req.body || {};
+  const action = body.action;
+  const payload = body.payload || {};
 
   try {
 
-    // ============================
-    // USER
-    // ============================
+    // ================= USER =================
 
     if (action === "getUser") {
 
       const { user_id } = payload;
 
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("users")
         .select("*")
         .eq("id", user_id);
 
-      return res.json(data && data.length ? data[0] : null);
+      if (error) return res.json(null);
+      return res.json(data?.[0] || null);
     }
 
     if (action === "updateProfile") {
@@ -43,9 +44,7 @@ export default async function handler(req, res) {
       return res.json({ success: true });
     }
 
-    // ============================
-    // CLANS
-    // ============================
+    // ================= CLANS =================
 
     if (action === "getAllClans") {
 
@@ -65,7 +64,7 @@ export default async function handler(req, res) {
         .select("*")
         .eq("id", clan_id);
 
-      return res.json(data && data.length ? data[0] : null);
+      return res.json(data?.[0] || null);
     }
 
     if (action === "getMembers") {
@@ -80,28 +79,21 @@ export default async function handler(req, res) {
       return res.json(data || []);
     }
 
-    // ============================
-    // ЗАЯВКИ В КЛАН
-    // ============================
+    // ================= REQUESTS =================
 
     if (action === "applyClan") {
 
       const { user_id, clan_id } = payload;
 
-      const { data: userData } = await supabase
+      const { data } = await supabase
         .from("users")
         .select("*")
         .eq("id", user_id);
 
-      const user = userData && userData.length ? userData[0] : null;
+      const user = data?.[0];
 
-      if (!user) {
-        return res.json({ error: "Пользователь не найден" });
-      }
-
-      if (user.clan_id) {
-        return res.json({ error: "Вы уже в клане" });
-      }
+      if (!user) return res.json({ error: "Нет пользователя" });
+      if (user.clan_id) return res.json({ error: "Уже в клане" });
 
       await supabase
         .from("clan_requests")
@@ -131,11 +123,8 @@ export default async function handler(req, res) {
         .select("*")
         .eq("id", request_id);
 
-      const request = data && data.length ? data[0] : null;
-
-      if (!request) {
-        return res.json({ error: "Заявка не найдена" });
-      }
+      const request = data?.[0];
+      if (!request) return res.json({ error: "Нет заявки" });
 
       await supabase
         .from("users")
@@ -165,9 +154,7 @@ export default async function handler(req, res) {
       return res.json({ success: true });
     }
 
-    // ============================
-    // ВЫХОД ИЗ КЛАНА
-    // ============================
+    // ================= LEAVE =================
 
     if (action === "leaveClan") {
 
@@ -184,9 +171,7 @@ export default async function handler(req, res) {
       return res.json({ success: true });
     }
 
-    // ============================
-    // УПРАВЛЕНИЕ УЧАСТНИКАМИ
-    // ============================
+    // ================= MANAGEMENT =================
 
     if (action === "kickMember") {
 
@@ -209,17 +194,11 @@ export default async function handler(req, res) {
 
       await supabase
         .from("users")
-        .update({
-          clan_role: new_role
-        })
+        .update({ clan_role: new_role })
         .eq("id", target_user_id);
 
       return res.json({ success: true });
     }
-
-    // ============================
-    // УДАЛЕНИЕ КЛАНА
-    // ============================
 
     if (action === "deleteClan") {
 
@@ -248,8 +227,8 @@ export default async function handler(req, res) {
 
     return res.json({ error: "Unknown action" });
 
-  } catch (error) {
-    console.error("SERVER ERROR:", error);
+  } catch (err) {
+    console.error(err);
     return res.status(500).json({ error: "Server error" });
   }
 }
