@@ -18,9 +18,7 @@ export default async function handler(req, res) {
 
   try {
 
-  //////////////////////////////////////////////////////
-  // USERS
-  //////////////////////////////////////////////////////
+  // ================= USERS =================
 
   if (action === "getUser") {
     const { user_id } = payload;
@@ -35,9 +33,32 @@ export default async function handler(req, res) {
     return res.json({ success:true });
   }
 
-  //////////////////////////////////////////////////////
-  // CLANS
-  //////////////////////////////////////////////////////
+  if (action === "leaveClan") {
+    const { user_id } = payload;
+
+    const { data:user } = await supabase.from("users").select("*").eq("id", user_id).single();
+
+    if (user.clan_role === "Глава") {
+      const { data:co } = await supabase
+        .from("users")
+        .select("*")
+        .eq("clan_id", user.clan_id)
+        .eq("clan_role","Со-глава")
+        .limit(1);
+
+      if (co && co.length > 0) {
+        await supabase.from("users").update({ clan_role:"Глава" }).eq("id", co[0].id);
+      }
+    }
+
+    await supabase.from("users")
+      .update({ clan_id:null, clan_role:null })
+      .eq("id", user_id);
+
+    return res.json({ success:true });
+  }
+
+  // ================= CLANS =================
 
   if (action === "getClan") {
     const { clan_id } = payload;
@@ -69,9 +90,31 @@ export default async function handler(req, res) {
     return res.json(newClan);
   }
 
-  //////////////////////////////////////////////////////
-  // MEMBERS
-  //////////////////////////////////////////////////////
+  if (action === "updateClanInfo") {
+    const { clan_id, name, description } = payload;
+    await supabase.from("clans").update({ name, description }).eq("id", clan_id);
+    return res.json({ success:true });
+  }
+
+  if (action === "updateGoal") {
+    const { clan_id, goal } = payload;
+    await supabase.from("clans").update({ goal }).eq("id", clan_id);
+    return res.json({ success:true });
+  }
+
+  if (action === "deleteClan") {
+    const { clan_id } = payload;
+
+    await supabase.from("users").update({ clan_id:null, clan_role:null }).eq("clan_id", clan_id);
+    await supabase.from("clan_requests").delete().eq("clan_id", clan_id);
+    await supabase.from("clan_news").delete().eq("clan_id", clan_id);
+    await supabase.from("clan_wars").delete().or(`attacker_id.eq.${clan_id},defender_id.eq.${clan_id}`);
+    await supabase.from("clans").delete().eq("id", clan_id);
+
+    return res.json({ success:true });
+  }
+
+  // ================= MEMBERS =================
 
   if (action === "getMembers") {
     const { clan_id } = payload;
@@ -94,28 +137,69 @@ export default async function handler(req, res) {
     if (!allowedRoles.includes(new_role))
       return res.json({ error:"Недопустимая роль" });
 
-    const { data:target } = await supabase
-      .from("users")
-      .select("*")
-      .eq("id", target_user_id)
-      .single();
+    const { data:target } = await supabase.from("users").select("*").eq("id", target_user_id).single();
 
     if (!target) return res.json({ error:"Пользователь не найден" });
 
     if (target.clan_role === "Глава")
       return res.json({ error:"Нельзя изменить роль главы" });
 
-    await supabase
-      .from("users")
-      .update({ clan_role:new_role })
+    await supabase.from("users").update({ clan_role:new_role }).eq("id", target_user_id);
+
+    return res.json({ success:true });
+  }
+
+  if (action === "kickMember") {
+
+    const { target_user_id } = payload;
+
+    const { data:target } = await supabase.from("users").select("*").eq("id", target_user_id).single();
+
+    if (target.clan_role === "Глава")
+      return res.json({ error:"Нельзя выгнать главу" });
+
+    await supabase.from("users")
+      .update({ clan_id:null, clan_role:null })
       .eq("id", target_user_id);
 
     return res.json({ success:true });
   }
 
-  //////////////////////////////////////////////////////
-  // CLAN WARS
-  //////////////////////////////////////////////////////
+  // ================= REQUESTS =================
+
+  if (action === "getRequests") {
+    const { clan_id } = payload;
+    const { data } = await supabase.from("clan_requests").select("*").eq("clan_id", clan_id);
+    return res.json(data || []);
+  }
+
+  if (action === "applyClan") {
+    const { user_id, clan_id } = payload;
+
+    const { data:user } = await supabase.from("users").select("*").eq("id", user_id).single();
+    if (user.clan_id)
+      return res.json({ error:"Вы уже состоите в клане" });
+
+    await supabase.from("clan_requests").insert([{ user_id, clan_id }]);
+    return res.json({ success:true });
+  }
+
+  if (action === "acceptRequest") {
+    const { user_id, clan_id } = payload;
+
+    await supabase.from("users").update({ clan_id, clan_role:"Участник" }).eq("id", user_id);
+    await supabase.from("clan_requests").delete().eq("user_id", user_id);
+
+    return res.json({ success:true });
+  }
+
+  if (action === "rejectRequest") {
+    const { user_id } = payload;
+    await supabase.from("clan_requests").delete().eq("user_id", user_id);
+    return res.json({ success:true });
+  }
+
+  // ================= CLAN WARS =================
 
   if (action === "declareWar") {
 
@@ -128,23 +212,13 @@ export default async function handler(req, res) {
     const end = new Date(now.getTime() + 48*60*60*1000);
     const cooldown = new Date(end.getTime() + 12*60*60*1000);
 
-    // Проверка атакующего
-    const { data:attackerWars } = await supabase
+    const { data:active } = await supabase
       .from("clan_wars")
       .select("*")
-      .or(`attacker_id.eq.${attacker_id},defender_id.eq.${attacker_id}`);
+      .or(`attacker_id.eq.${attacker_id},defender_id.eq.${attacker_id},attacker_id.eq.${defender_id},defender_id.eq.${defender_id}`);
 
-    if (attackerWars.length > 0)
-      return res.json({ error:"Ваш клан уже участвует в войне" });
-
-    // Проверка защитника
-    const { data:defenderWars } = await supabase
-      .from("clan_wars")
-      .select("*")
-      .or(`attacker_id.eq.${defender_id},defender_id.eq.${defender_id}`);
-
-    if (defenderWars.length > 0)
-      return res.json({ error:"Этот клан уже участвует в войне" });
+    if (active && active.length > 0)
+      return res.json({ error:"Один из кланов уже участвует в войне" });
 
     await supabase.from("clan_wars").insert([{
       attacker_id,
@@ -157,76 +231,10 @@ export default async function handler(req, res) {
     return res.json({ success:true });
   }
 
-  if (action === "getClanWars") {
-
-    const { clan_id } = payload;
-    const now = new Date();
-
-    const { data:wars } = await supabase
-      .from("clan_wars")
-      .select("*")
-      .or(`attacker_id.eq.${clan_id},defender_id.eq.${clan_id}`);
-
-    for (let w of wars || []) {
-
-      const created = new Date(w.created_at);
-      const ends = new Date(w.ends_at);
-      const cooldown = new Date(w.cooldown_until);
-
-      const { data:attacker } = await supabase.from("clans").select("name").eq("id", w.attacker_id).single();
-      const { data:defender } = await supabase.from("clans").select("name").eq("id", w.defender_id).single();
-
-      // Сообщение при старте (1 раз)
-      if (now - created < 60*1000) {
-
-        if (w.attacker_id === clan_id) {
-          await supabase.from("clan_news").insert([{
-            clan_id,
-            text:`⚔️ Ваш клан объявил войну клану ${defender?.name}`
-          }]);
-        } else {
-          await supabase.from("clan_news").insert([{
-            clan_id,
-            text:`⚔️ Вам объявил войну клан ${attacker?.name}`
-          }]);
-        }
-      }
-
-      // 24 часа
-      if (now - created > 24*60*60*1000 && now < ends) {
-        await supabase.from("clan_news").insert([{
-          clan_id,
-          text:`🔥 Совсем скоро появятся концепты написанные для битвы от участников вашего клана, выбери лучший`
-        }]);
-      }
-
-      // 48 часов
-      if (now > ends && now < cooldown) {
-        await supabase.from("clan_news").insert([{
-          clan_id,
-          text:`🏁 Война окончена!`
-        }]);
-      }
-
-      // Удаление после кулдауна
-      if (now > cooldown) {
-        await supabase.from("clan_wars").delete().eq("id", w.id);
-      }
-
-    }
-
-    const { data:updated } = await supabase
-      .from("clan_wars")
-      .select("*")
-      .or(`attacker_id.eq.${clan_id},defender_id.eq.${clan_id}`);
-
-    return res.json(updated || []);
-  }
-
   return res.status(400).json({ error:"Unknown action" });
 
   } catch (err) {
-    console.error("SERVER ERROR:", err);
+    console.error(err);
     return res.status(500).json({ error: err.message });
   }
 }
