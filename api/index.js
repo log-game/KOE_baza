@@ -2,43 +2,68 @@ import { createClient } from "@supabase/supabase-js";
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_KEY
+  process.env.SUPABASE_KEY // ← ВАЖНО
 );
 
 export default async function handler(req, res) {
 
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "POST only" });
-  }
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-  const body = req.body || {};
-  const action = body.action;
-  const payload = body.payload || {};
+  if (req.method === "OPTIONS") return res.status(200).end();
+  if (req.method !== "POST")
+    return res.status(405).json({ error: "Method not allowed" });
+
+  const { action, payload } = req.body || {};
 
   try {
 
-    // ================= USER =================
+    // ================= USERS =================
 
     if (action === "getUser") {
-
-      const { user_id } = payload;
+      const { user_id } = payload || {};
+      if (!user_id) return res.json(null);
 
       const { data, error } = await supabase
         .from("users")
         .select("*")
-        .eq("id", user_id);
+        .eq("id", user_id)
+        .maybeSingle();
 
-      if (error) return res.json(null);
-      return res.json(data?.[0] || null);
+      if (error) {
+        console.error(error);
+        return res.json(null);
+      }
+
+      return res.json(data || null);
     }
 
-    if (action === "updateProfile") {
+    if (action === "updateUser") {
+      const { user_id, name, description } = payload || {};
 
-      const { user_id, name, description } = payload;
+      const updates = {};
+      if (name !== undefined) updates.name = name;
+      if (description !== undefined) updates.description = description;
+
+      const { data, error } = await supabase
+        .from("users")
+        .update(updates)
+        .eq("id", user_id)
+        .select()
+        .maybeSingle();
+
+      if (error) console.error(error);
+
+      return res.json(data || null);
+    }
+
+    if (action === "leaveClan") {
+      const { user_id } = payload || {};
 
       await supabase
         .from("users")
-        .update({ name, description })
+        .update({ clan_id: null, clan_role: null })
         .eq("id", user_id);
 
       return res.json({ success: true });
@@ -46,65 +71,36 @@ export default async function handler(req, res) {
 
     // ================= CLANS =================
 
-    if (action === "getAllClans") {
-
-      const { data } = await supabase
-        .from("clans")
-        .select("id,name");
-
-      return res.json(data || []);
-    }
-
     if (action === "getClan") {
+      const { clan_id } = payload || {};
+      if (!clan_id) return res.json(null);
 
-      const { clan_id } = payload;
-
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("clans")
         .select("*")
-        .eq("id", clan_id);
+        .eq("id", clan_id)
+        .maybeSingle();
 
-      return res.json(data?.[0] || null);
+      if (error) console.error(error);
+
+      return res.json(data || null);
     }
 
     if (action === "getMembers") {
-
-      const { clan_id } = payload;
+      const { clan_id } = payload || {};
+      if (!clan_id) return res.json([]);
 
       const { data } = await supabase
         .from("users")
-        .select("*")
+        .select("id,name,cups,concepts,clan_role")
         .eq("clan_id", clan_id);
 
       return res.json(data || []);
     }
 
-    // ================= REQUESTS =================
-
-    if (action === "applyClan") {
-
-      const { user_id, clan_id } = payload;
-
-      const { data } = await supabase
-        .from("users")
-        .select("*")
-        .eq("id", user_id);
-
-      const user = data?.[0];
-
-      if (!user) return res.json({ error: "Нет пользователя" });
-      if (user.clan_id) return res.json({ error: "Уже в клане" });
-
-      await supabase
-        .from("clan_requests")
-        .insert([{ user_id, clan_id }]);
-
-      return res.json({ success: true });
-    }
-
     if (action === "getClanRequests") {
-
-      const { clan_id } = payload;
+      const { clan_id } = payload || {};
+      if (!clan_id) return res.json([]);
 
       const { data } = await supabase
         .from("clan_requests")
@@ -115,24 +111,23 @@ export default async function handler(req, res) {
     }
 
     if (action === "acceptRequest") {
-
-      const { request_id } = payload;
+      const { request_id } = payload || {};
 
       const { data } = await supabase
         .from("clan_requests")
         .select("*")
-        .eq("id", request_id);
+        .eq("id", request_id)
+        .maybeSingle();
 
-      const request = data?.[0];
-      if (!request) return res.json({ error: "Нет заявки" });
+      if (!data) return res.json({ error: "No request" });
 
       await supabase
         .from("users")
         .update({
-          clan_id: request.clan_id,
+          clan_id: data.clan_id,
           clan_role: "Участник"
         })
-        .eq("id", request.user_id);
+        .eq("id", data.user_id);
 
       await supabase
         .from("clan_requests")
@@ -143,8 +138,7 @@ export default async function handler(req, res) {
     }
 
     if (action === "rejectRequest") {
-
-      const { request_id } = payload;
+      const { request_id } = payload || {};
 
       await supabase
         .from("clan_requests")
@@ -154,81 +148,48 @@ export default async function handler(req, res) {
       return res.json({ success: true });
     }
 
-    // ================= LEAVE =================
+    // ================= WAR =================
 
-    if (action === "leaveClan") {
+    if (action === "getCurrentWar") {
+      const { clan_id } = payload || {};
+      if (!clan_id) return res.json(null);
 
-      const { user_id } = payload;
+      const { data } = await supabase
+        .from("clan_wars")
+        .select("*")
+        .or(`clan1_id.eq.${clan_id},clan2_id.eq.${clan_id}`)
+        .maybeSingle();
 
-      await supabase
-        .from("users")
-        .update({
-          clan_id: null,
-          clan_role: null
-        })
-        .eq("id", user_id);
-
-      return res.json({ success: true });
+      return res.json(data || null);
     }
 
-    // ================= MANAGEMENT =================
+    if (action === "declareWar") {
+      const { clan1_id, clan2_id } = payload || {};
+      if (!clan1_id || !clan2_id)
+        return res.json({ error: "Missing id" });
 
-    if (action === "kickMember") {
+      const now = new Date();
+      const ends = new Date(now.getTime() + 48 * 60 * 60 * 1000);
 
-      const { target_user_id } = payload;
+      const { data } = await supabase
+        .from("clan_wars")
+        .insert([{
+          clan1_id,
+          clan2_id,
+          phase: "submission",
+          started_at: now,
+          ends_at: ends
+        }])
+        .select()
+        .maybeSingle();
 
-      await supabase
-        .from("users")
-        .update({
-          clan_id: null,
-          clan_role: null
-        })
-        .eq("id", target_user_id);
-
-      return res.json({ success: true });
-    }
-
-    if (action === "changeRole") {
-
-      const { target_user_id, new_role } = payload;
-
-      await supabase
-        .from("users")
-        .update({ clan_role: new_role })
-        .eq("id", target_user_id);
-
-      return res.json({ success: true });
-    }
-
-    if (action === "deleteClan") {
-
-      const { clan_id } = payload;
-
-      await supabase
-        .from("users")
-        .update({
-          clan_id: null,
-          clan_role: null
-        })
-        .eq("clan_id", clan_id);
-
-      await supabase
-        .from("clan_requests")
-        .delete()
-        .eq("clan_id", clan_id);
-
-      await supabase
-        .from("clans")
-        .delete()
-        .eq("id", clan_id);
-
-      return res.json({ success: true });
+      return res.json(data || null);
     }
 
     return res.json({ error: "Unknown action" });
 
   } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: "Server error" });
+    console.error("SERVER ERROR:", err);
+    return res.status(500).json({ error: "Server crash" });
   }
 }
