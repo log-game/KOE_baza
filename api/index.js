@@ -202,66 +202,69 @@ export default async function handler(req, res) {
 
   // ================= CLAN WARS =================
 
-if (action === "declareWar") {
+  if (action === "getActiveWar") {
 
-  const attacker_id = payload?.attacker_id;
-  const defender_id = payload?.defender_id;
+    const { clan_id } = payload;
 
-  if (!attacker_id || !defender_id) {
-    return res.json({ error: "ID не переданы" });
+    const { data } = await supabase
+      .from("clan_wars")
+      .select("*")
+      .or(`attacker_id.eq.${clan_id},defender_id.eq.${clan_id}`)
+      .eq("status","active")
+      .maybeSingle();
+
+    if (data) {
+      const now = new Date();
+      const end = new Date(data.ends_at);
+
+      if (now >= end) {
+        await supabase.from("clan_wars").update({ status:"finished" }).eq("id", data.id);
+        return res.json(null);
+      }
+    }
+
+    return res.json(data || null);
   }
 
-  if (attacker_id === defender_id) {
-    return res.json({ error: "Нельзя объявить войну самому себе" });
+  if (action === "declareWar") {
+
+    const { attacker_id, defender_id } = payload;
+
+    if (!attacker_id || !defender_id)
+      return res.json({ error:"Не переданы ID" });
+
+    if (attacker_id === defender_id)
+      return res.json({ error:"Нельзя объявить войну себе" });
+
+    const { data:active } = await supabase
+      .from("clan_wars")
+      .select("id")
+      .or(`attacker_id.eq.${attacker_id},defender_id.eq.${attacker_id},attacker_id.eq.${defender_id},defender_id.eq.${defender_id}`)
+      .eq("status","active");
+
+    if (active && active.length > 0)
+      return res.json({ error:"Один из кланов уже в войне" });
+
+    const now = new Date();
+    const end = new Date(now.getTime() + 48*60*60*1000);
+    const cooldown = new Date(end.getTime() + 12*60*60*1000);
+
+    await supabase.from("clan_wars").insert([{
+      attacker_id,
+      defender_id,
+      status:"active",
+      created_at: now.toISOString(),
+      ends_at: end.toISOString(),
+      cooldown_until: cooldown.toISOString()
+    }]);
+
+    return res.json({ success:true });
   }
 
-  // Проверяем есть ли уже война
-  const { data: existing } = await supabase
-    .from("clan_wars")
-    .select("*")
-    .or(`attacker_id.eq.${attacker_id},defender_id.eq.${attacker_id}`);
+  return res.status(400).json({ error:"Unknown action" });
 
-  if (existing && existing.length > 0) {
-    return res.json({ error: "Клан уже участвует в войне" });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: err.message });
   }
-
-  const now = new Date();
-  const end = new Date(now.getTime() + 48 * 60 * 60 * 1000);
-
-  await supabase.from("clan_wars").insert([{
-    attacker_id,
-    defender_id,
-    created_at: now.toISOString(),
-    ends_at: end.toISOString()
-  }]);
-
-  return res.json({ success: true });
-}
-
-
-
-if (action === "getActiveWar") {
-
-  const clan_id = payload?.clan_id;
-
-  if (!clan_id) return res.json(null);
-
-  const { data } = await supabase
-    .from("clan_wars")
-    .select("*")
-    .or(`attacker_id.eq.${clan_id},defender_id.eq.${clan_id}`)
-    .limit(1)
-    .maybeSingle();
-
-  if (!data) return res.json(null);
-
-  const now = new Date();
-  const end = new Date(data.ends_at);
-
-  if (now >= end) {
-    await supabase.from("clan_wars").delete().eq("id", data.id);
-    return res.json(null);
-  }
-
-  return res.json(data);
-}
+      }
